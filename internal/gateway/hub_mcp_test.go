@@ -403,7 +403,7 @@ func TestHubMCPHeldToKeyLimit(t *testing.T) {
 // it and what each is for: a Pi asked about a GitHub repository cloned
 // it rather than ask the DeepWiki behind the router, told only "The tools
 // of the MCP servers in magpie's Library" (11-01). Every server is named
-// and what it is for cut to fit, then said whole below.
+// and what it is for is cut to fit, then said whole below.
 func TestHubMCPNamesItsServers(t *testing.T) {
 	fresh(t)
 	t.Setenv("MAGPIE_ADDR", "")
@@ -446,14 +446,18 @@ func TestHubMCPNamesItsServers(t *testing.T) {
 		t.Errorf("how its tools are named is gone: %q", say)
 	}
 
-	// too many to say each: as many names as fit, the rest counted
+	// too many to describe: every name is still sent
 	f.mu.Lock()
 	f.servers["claude"] = many
 	f.mu.Unlock()
 	say, _, _ = whereReply(t, h, here)
 	first, _, _ = strings.Cut(say, "\n")
-	if n := len([]rune(first)); n > 250 || !strings.Contains(first, "server-00") || !strings.Contains(first, " more") {
-		t.Errorf("40 servers: %d characters, %q", n, first)
+	var names []string
+	for _, s := range many {
+		names = append(names, s.Name)
+	}
+	if want := "Tools of " + strings.Join(names, ", ") + "."; first != want {
+		t.Errorf("40 servers: got %q, want %q", first, want)
 	}
 
 	// none: as before

@@ -6,10 +6,9 @@ import (
 	"testing"
 )
 
-// However many servers and tools there are, the instructions stay within
-// hubSayMax with the tail whole, and every server magpie knows anything
-// of is named on a line of its own.
-func TestHubAboutBounded(t *testing.T) {
+// The instructions keep the whole tail and every server and tool name,
+// even when the names alone exceed the usual description budget.
+func TestHubAboutKeepsNames(t *testing.T) {
 	const tail = "The tools of every MCP server in magpie's Library, each named <server>__<tool>."
 	for _, n := range []int{1, 3, 12, 40} {
 		for _, tools := range []int{0, 2, 30, 200} {
@@ -20,19 +19,34 @@ func TestHubAboutBounded(t *testing.T) {
 					ss[i].Tools = append(ss[i].Tools, HubToolNote{Name: fmt.Sprintf("tool_%03d", j), About: strings.Repeat("word ", 60)})
 				}
 			}
+			want := make(map[string]bool, n)
+			byServer := make(map[string][]HubToolNote, n)
+			for _, server := range ss {
+				want[server.Name] = true
+				byServer[server.Name] = server.Tools
+			}
 			say := hubAbout(ss, "This router: Los Angeles.", tail)
-			if l := runeLen(say); l > hubSayMax {
+			if l := runeLen(say); tools == 0 && l > hubSayMax {
 				t.Errorf("%d servers × %d tools: %d characters", n, tools, l)
 			}
 			if !strings.HasSuffix(say, tail) {
 				t.Errorf("%d servers × %d tools: the tail is cut:\n%s", n, tools, say)
 			}
-			if n <= 12 {
-				for _, s := range ss {
-					if !strings.Contains(say, "\n- "+s.Name) {
-						t.Errorf("%d servers × %d tools: %s has no line:\n%s", n, tools, s.Name, say)
+			for _, line := range strings.Split(say, "\n")[1:] {
+				if !strings.HasPrefix(line, "- ") {
+					continue
+				}
+				server, _, _ := strings.Cut(strings.TrimPrefix(line, "- "), ": ")
+				delete(want, server)
+				for _, tool := range byServer[server] {
+					if !strings.Contains(line, tool.Name) {
+						t.Errorf("%s: missing tool %q", server, tool.Name)
+						break
 					}
 				}
+			}
+			if len(want) != 0 {
+				t.Errorf("%d servers × %d tools: missing detail lines for %v", n, tools, want)
 			}
 		}
 	}
@@ -52,8 +66,8 @@ func TestHubServerLine(t *testing.T) {
 	if got := hubServerLine(HubServer{Name: "bare"}, 1000); got != "" {
 		t.Errorf("a server known by name only has a line: %q", got)
 	}
-	if got := hubServerLine(s, 30); runeLen(got) > 30 {
-		t.Errorf("%q is over 30", got)
+	if got, want := hubServerLine(s, 10), "- la: Tools: fetch__fetch, x."; got != want {
+		t.Errorf("got %q, want %q", got, want)
 	}
 }
 
@@ -77,5 +91,28 @@ func TestHubLineOfARouter(t *testing.T) {
 	got := HubLine([]HubServer{{Name: "la", About: "Tools of notes (Notes the team keeps), time."}})
 	if want := "Tools of la (notes (Notes the team keeps))."; got != want {
 		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+// The first line is also written to Pi's configuration. Descriptions can
+// give way to names, but the Magpie side never replaces names with a count.
+func TestHubLineKeepsNames(t *testing.T) {
+	names := strings.Fields("calc cloudflare-docs context7 cyberapi goanyapi ip2location layerfs magpie-memory filesystem github docker kubernetes postgres redis slack fetch time linear notion browser deepwiki sqlite playwright sentry grafana prometheus magpie-image")
+	for _, n := range []int{10, 20, 27} {
+		var ss []HubServer
+		for _, name := range names[:n] {
+			ss = append(ss, HubServer{Name: name, About: "Does some useful work for the calling agent."})
+		}
+		got := HubLine(ss)
+		if strings.Contains(got, " more") {
+			t.Errorf("%d servers: roster was shortened: %s", n, got)
+		}
+		parts := strings.Split(strings.TrimSuffix(strings.TrimPrefix(got, "Tools of "), "."), ", ")
+		for i, name := range names[:n] {
+			if i >= len(parts) || parts[i] != name && !strings.HasPrefix(parts[i], name+" (") {
+				t.Errorf("%d servers: expected %q at position %d in %q", n, name, i, got)
+				break
+			}
+		}
 	}
 }

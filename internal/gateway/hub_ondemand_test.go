@@ -214,7 +214,7 @@ func imageAndNotes(agent string, n int) *fakeHub {
 // line shows (omp's catalog), and names each server's tools after what it
 // does. Told only how to search, a model asked for a picture of a cat
 // searched three times and stopped (tao5010 on Discord, 11-04). Many
-// servers keep it bounded.
+// servers still have all their tool names.
 func TestHubFindToolsSaysWhatIsBehind(t *testing.T) {
 	fresh(t)
 	withHub(t, imageAndNotes("opencode", hubOnDemandOver+2))
@@ -234,7 +234,7 @@ func TestHubFindToolsSaysWhatIsBehind(t *testing.T) {
 		}
 	}
 
-	// forty servers of twenty tools each: the description stays bounded
+	// forty servers of twenty tools each: no tool is lost from its server line
 	many := &fakeHub{on: true, tools: map[string][]HubTool{}, servers: map[string][]HubServer{}}
 	for i := range 40 {
 		s := HubServer{Name: fmt.Sprintf("server%02d", i), About: "Does a long list of things for the user, each of them described at length", Known: true}
@@ -247,8 +247,16 @@ func TestHubFindToolsSaysWhatIsBehind(t *testing.T) {
 	}
 	withHub(t, many)
 	find = listedSpecs(t, hubPost(h, "opencode", here, toolsList).Body.String())[hubFindTool]
-	if max := hubLineMax + len(hubFindHow) + hubFindSayMax + 2; runeLen(find) > max || !strings.Contains(find, "server00") {
-		t.Fatalf("with 40 servers find_tools' description is %d characters (at most %d): %s", runeLen(find), max, find)
+	for _, server := range many.servers["opencode"] {
+		_, after, ok := strings.Cut(find, "\n- "+server.Name+": ")
+		if !ok {
+			t.Errorf("find_tools has no line for %q", server.Name)
+			continue
+		}
+		line, _, _ := strings.Cut(after, "\n")
+		if !strings.Contains(line, "tool_with_a_long_name_19") {
+			t.Errorf("find_tools lost the last tool for %q: %s", server.Name, line)
+		}
 	}
 }
 

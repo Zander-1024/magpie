@@ -511,15 +511,15 @@ func hubTools(ctx context.Context, agent string) []hubTool {
 	return hubNamed(ts)
 }
 
-// hubLineMax is how much of the instructions' first line an agent is sure
-// to show its model: Pi shows a server as that line, cut at 250 characters
+// hubLineMax is the budget for optional descriptions on the first line.
+// The names may exceed it: Pi cuts the line at 250 characters
 // (extensions/mcp, MAX_SERVER_DESCRIPTION_CHARS), and an agent that lists
 // the router's tools only once they are searched for knows of the servers
 // behind it from this line alone (a Pi asked about a GitHub repository
 // cloned it instead of asking DeepWiki, 11-01).
 const hubLineMax = 250
 
-// hubSayMax is how long the instructions are at most, in characters: half
+// hubSayMax is the instructions' budget with optional prose, in characters: half
 // the 4096 Claude Code keeps of a server's instructions, so a model given
 // several routers reads a few lines of each. The lines that describe each
 // server take what the rest leaves.
@@ -527,7 +527,8 @@ const hubSayMax = 2000
 
 // hubAbout is the instructions: HubLine, then here (what the router says
 // of where it is, when it has a name), then a line for each server with
-// what it is for and its tools (hubDetails), then tail, within hubSayMax.
+// what it is for and its tools (hubDetails), then tail. Names are kept
+// even when they do not fit within hubSayMax.
 // With no server it is tail, then here.
 func hubAbout(ss []HubServer, here, tail string) string {
 	if len(ss) == 0 {
@@ -543,27 +544,30 @@ func hubAbout(ss []HubServer, here, tail string) string {
 	return out + hubDetails(ss, hubSayMax-runeLen(out)-runeLen(tail)) + tail
 }
 
-// hubDetails is a line for each server that magpie knows anything of,
-// within max characters in all: its name, its own title, what it is for,
-// and its tools, each with the first clause of its description. A line
-// too long for its share says its tools by name only, then as many of
-// them as fit; the room a short line leaves goes to the others.
-func hubDetails(ss []HubServer, max int) string {
+// hubDetails describes each server, reserving room for every known tool
+// name before sharing the rest among optional descriptions. Short lines
+// leave more room for the other lines, and names may exceed the budget.
+func hubDetails(ss []HubServer, room int) string {
 	order := make([]int, 0, len(ss))
 	full := make([]string, len(ss))
+	minimum := make([]int, len(ss))
+	left := room
 	for i, s := range ss {
 		if full[i] = hubServerLine(s, 1<<20); full[i] != "" {
 			order = append(order, i)
 		}
+		if l := hubServerLine(s, 0); l != "" {
+			minimum[i] = runeLen(l) + len("\n")
+			left -= minimum[i]
+		}
 	}
 	slices.SortStableFunc(order, func(a, b int) int { return runeLen(full[a]) - runeLen(full[b]) })
 	lines := make([]string, len(ss))
-	left := max
 	for j, i := range order {
-		share := left/(len(order)-j) - len("\n")
+		share := minimum[i] + left/(len(order)-j) - len("\n")
 		if l := hubServerLine(ss[i], share); l != "" {
 			lines[i] = l
-			left -= runeLen(l) + len("\n")
+			left -= runeLen(l) + len("\n") - minimum[i]
 		}
 	}
 	var out strings.Builder
@@ -575,32 +579,24 @@ func hubDetails(ss []HubServer, max int) string {
 	return out.String()
 }
 
-// hubServerLine is s's line in at most room characters: "- name (title):
-// what it is for. Tools: a (what a does), b.", "" when magpie knows
-// nothing of it or not even its name fits.
+// hubServerLine keeps the server and tool names even when they exceed room.
+// The title, purpose and tool descriptions are optional.
 func hubServerLine(s HubServer, room int) string {
 	head := "- " + s.Name
+	titled := head
 	if t := oneLine(s.Title); t != "" && !strings.EqualFold(t, s.Name) {
-		head += " (" + t + ")"
+		titled += " (" + t + ")"
 	}
 	about := strings.TrimSuffix(oneLine(s.About), ".")
 	if about == "" && len(s.Tools) == 0 {
 		return ""
 	}
-	if runeLen(head)+len(": .") > room {
-		return ""
-	}
-	say := func(about string, tools []string, more int) string {
+	say := func(head, about string, tools []string) string {
 		var parts []string
 		if about != "" {
 			parts = append(parts, about)
 		}
-		switch {
-		case len(tools) == 0 && more > 0:
-			parts = append(parts, strconv.Itoa(more)+" tools")
-		case more > 0:
-			parts = append(parts, "Tools: "+strings.Join(tools, ", ")+", and "+strconv.Itoa(more)+" more")
-		case len(tools) > 0:
+		if len(tools) > 0 {
 			parts = append(parts, "Tools: "+strings.Join(tools, ", "))
 		}
 		return head + ": " + strings.Join(parts, ". ") + "."
@@ -614,27 +610,16 @@ func hubServerLine(s HubServer, room int) string {
 			described[i] += " (" + a + ")"
 		}
 	}
-	for _, tools := range [][]string{described, names} {
-		if l := say(about, tools, 0); runeLen(l) <= room {
+	for _, l := range []string{say(titled, about, described), say(titled, about, names), say(head, about, names)} {
+		if runeLen(l) <= room {
 			return l
 		}
 	}
-	// too long: what it is for in half the room at most, then as many
-	// names as fit, the rest counted
-	if about != "" {
-		if n := room/2 - runeLen(head) - len(": ."); n < 12 {
-			about = ""
-		} else {
-			about = strings.TrimSuffix(hubCut(about, n), "…")
-		}
+	if len(names) > 0 {
+		return say(head, "", names)
 	}
-	for kept := len(names); kept >= 0; kept-- {
-		if l := say(about, names[:kept], len(names)-kept); runeLen(l) <= room {
-			return l
-		}
-	}
-	if about != "" {
-		return hubCut(say(about, nil, 0), room)
+	if n := room - runeLen(head) - len(": ."); n >= 12 {
+		return say(head, strings.TrimSuffix(hubCut(about, n), "…"), nil)
 	}
 	return ""
 }
@@ -656,7 +641,7 @@ func hubToolClause(d string) string {
 func oneLine(s string) string { return strings.Join(strings.Fields(s), " ") }
 
 // HubLine is one line naming the servers behind the hub, each with what
-// it is for cut to fit hubLineMax: "" when there is none.
+// it is for when there is room within hubLineMax: "" when there is none.
 func HubLine(ss []HubServer) string {
 	if len(ss) == 0 {
 		return ""
@@ -669,32 +654,26 @@ func HubLine(ss []HubServer) string {
 		// says "Tools of" once
 		short[i] = hubClause(strings.TrimPrefix(oneLine(s.About), head))
 	}
-	line := func(abouts []string, kept int) string {
-		parts := make([]string, 0, kept+1)
-		for i, s := range ss[:kept] {
+	line := func(abouts []string) string {
+		parts := make([]string, 0, len(ss))
+		for i, s := range ss {
 			if abouts[i] != "" {
 				parts = append(parts, s.Name+" ("+abouts[i]+")")
 			} else {
 				parts = append(parts, s.Name)
 			}
 		}
-		if n := len(ss) - kept; n > 0 {
-			parts = append(parts, "and "+strconv.Itoa(n)+" more")
-		}
 		return head + strings.Join(parts, ", ")
-	}
-	// the names first: as many as fit, the rest counted
-	none := make([]string, len(ss))
-	kept := len(ss)
-	for kept > 0 && runeLen(line(none, kept)) > room {
-		kept--
 	}
 	// what's left goes to the abouts, the short ones whole, the rest an
 	// equal share, cut at a word; a share too small to say anything is none
 	abouts := make([]string, len(ss))
-	left := room - runeLen(line(none, kept))
-	order := make([]int, 0, kept)
-	for i := range kept {
+	left := room - runeLen(line(abouts))
+	if left <= 0 {
+		return line(abouts) + "."
+	}
+	order := make([]int, 0, len(ss))
+	for i := range ss {
 		if short[i] != "" {
 			order = append(order, i)
 		}
@@ -708,7 +687,7 @@ func HubLine(ss []HubServer) string {
 		abouts[i] = hubCut(short[i], share)
 		left -= runeLen(abouts[i]) + len(" ()")
 	}
-	return line(abouts, kept) + "."
+	return line(abouts) + "."
 }
 
 // hubClause is the first part of a description: up to its first comma,

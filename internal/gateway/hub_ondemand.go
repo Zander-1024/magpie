@@ -131,10 +131,8 @@ func hubToolCount(ss []HubServer) int {
 // hubOnDemandSay is what the instructions add when the tools are on demand.
 const hubOnDemandSay = " Its tools are given on demand: " + hubFindTool + " gives a tool's description and parameters, and " + hubCallTool + " runs it by name."
 
-// hubFindSayMax is how many characters of find_tools' description name the
-// servers behind it and their tools (hubFindSay), sent with every request
-// of an agent given its tools on demand: about the cost of three tools'
-// schemas, in place of them all.
+// hubFindSayMax is the budget for the server detail lines in find_tools'
+// description. Tool names are never omitted to meet it.
 const hubFindSayMax = 1200
 
 // hubFindHow is what find_tools does, after what there is to find.
@@ -143,7 +141,8 @@ const hubFindHow = "Finds the tools of the MCP servers behind this one that matc
 // hubFindSay is find_tools' description: first a line naming each server
 // with what it is for (HubLine; an agent that lists a tool by its first
 // line, as omp's catalog does, shows that much), then what find_tools
-// does, then each server's tools (hubDetails) in hubFindSayMax characters.
+// does, then each server's tools (hubDetails), using hubFindSayMax as the
+// budget for optional descriptions.
 // A model given only find_tools and call_tool learns from it what there is
 // to find: told only how to search, a model asked for a picture of a cat
 // searched three times and stopped (tao5010 on Discord, 11-04).
